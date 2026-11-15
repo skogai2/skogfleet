@@ -1,0 +1,127 @@
+@import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --font-display: "Playfair Display", Georgia, serif;
+  --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* Admiralty Parchment & Brass Palette (Daylight Chart Room) */
+  --parchment: #efe7d6;
+  --parchment-raised: #faf5ea;
+  --parchment-deep: #e3d8c1;
+  --navy: #0e1a2b;
+  --navy-raised: #162842;
+  --navy-border: #283f61;
+  --brass: #b58c3c;
+  --brass-bright: #d4ad5a;
+  --brass-ink: #7a5819;
+  --ink: #171b24;
+  --ink-2: #3d4554;
+  --ink-3: #5b6373;
+  --rule: #cfc2a9;
+  --ready: #1b6543;
+  --ready-bg: #e2efe7;
+  --task: #8f4e10;
+  --task-bg: #f6ead9;
+  --off: #555e6e;
+  --off-bg: #e5e2db;
+  --danger: #9e2a2b;
+}
+
+.dark {
+  /* Candlelit Cabin Mode (Night Watch) */
+  --parchment: #121821;
+  --parchment-raised: #192230;
+  --parchment-deep: #0c1118;
+  --navy: #09101a;
+  --navy-raised: #111c2d;
+  --navy-border: #253957;
+  --brass: #cfa451;
+  --brass-bright: #e6be6c;
+  --brass-ink: #e0b765;
+  --ink: #ede6d6;
+  --ink-2: #c2baa8;
+  --ink-3: #968f80;
+  --rule: #2a3547;
+  --ready: #52c28e;
+  --ready-bg: #122d22;
+  --task: #ebb05b;
+  --task-bg: #2e2212;
+  --off: #9aa3b2;
+  --off-bg: #1e2633;
+  --danger: #e26d6e;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--parchment);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.font-mono-num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Subtle parchment paper grain texture via CSS radial micro-shading */
+.parchment-surface {
+  background-color: var(--parchment);
+  background-image:
+    radial-gradient(at 15% 15%, rgba(181, 140, 60, 0.06) 0px, transparent 48%),
+    radial-gradient(at 85% 80%, rgba(14, 26, 43, 0.04) 0px, transparent 52%);
+}
+
+.dark .parchment-surface {
+  background-color: var(--parchment);
+  background-image:
+    radial-gradient(at 15% 15%, rgba(207, 164, 81, 0.05) 0px, transparent 50%),
+    radial-gradient(at 85% 80%, rgba(0, 0, 0, 0.25) 0px, transparent 55%);
+}
+
+/* Focus ring accessibility */
+:focus-visible {
+  outline: 2px solid var(--brass);
+  outline-offset: 2px;
+}
+
+/* Thin custom scrollbars for nautical ledger panes */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--rule);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--brass);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
