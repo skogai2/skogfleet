@@ -105,3 +105,28 @@ Q2: Should the first concrete step be turning `crew/*.md` into hc templates that
 - Bash: `herdr-app --skill 2>&1 | head -160; echo "--- HC=$HC_TERMINAL_ID"; hc ls 2>&1 | head; echo "--- templates"; hc templates…`
 - Bash: `hc machine ls 2>&1; ls ~/.config/herdr-app/mods/ 2>&1; ls ~/.config/herdr-core/templates/; cat ~/.config/herdr-core/temp…`
 
+## 2026-11-15 05:38 · turn 153bd9b1
+
+**User**
+
+> the only real reason i spawned you in this one was because i wanted to show the stupid codecraft example ^^
+>
+> !`hc run --on claude-workstation --bg claude "your home folder needs to be cleaned up a lot. please save everything which would be important or possibly save worthy and copy to the side before pulling git" --cwd ./Work` should absolutely work i believe :)
+>
+> or simply `hc run --on claude-workstation "whoami"` etc
+
+**Assistant**
+
+Yes, it works. `hc exec --on claude-workstation whoami` returns `claude`, and `$HOME` is `/home/claude`.
+
+Before you launch the cleanup agent, two things about that command:
+
+- In your command, `--cwd ./Work` comes after the task string. hc will probably hand it to `claude` as an argument instead of reading it as its own option. Put it before the program: `hc run --on claude-workstation --bg --name cleanup --cwd /home/claude/Work claude "..."`. I haven't checked how hc parses trailing flags.
+- `/home/claude/Work` exists but is empty and isn't a git repo, so "before pulling git" has nothing to pull there. The git-backed parts of the home folder are `~/.dotfiles` (which `CLAUDE.md`, `TODO.md`, `HANDOVER.md` and `Argcfile.sh` link into) and `~/.config/mise` (which `.bashrc` and `memory` link into). The prompt should name which repo to pull, or `--cwd` should point at `/home/claude` itself.
+
+I didn't start the cleanup agent. It's your launch.
+
+**Actions**
+
+- Bash: `hc exec --on claude-workstation whoami; hc exec --on claude-workstation -- sh -c 'echo $HOME; ls -la ~ | head -40; ls -d…`
+
