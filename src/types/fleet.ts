@@ -2,6 +2,21 @@ export type CrewTier = 'Command' | 'Operations' | 'Support' | 'Special';
 
 export type CrewStatus = 'Mission Ready' | 'In Task' | 'Off Duty';
 
+export type TerminalState = 'working' | 'idle' | 'blocked' | 'error' | 'offline';
+
+export type AgentRuntime = 'claude' | 'pi' | 'codex' | 'custom';
+
+export type HookToolName =
+  | 'Read'
+  | 'Edit'
+  | 'Write'
+  | 'Bash'
+  | 'Grep'
+  | 'hc send'
+  | 'hc read'
+  | 'hc wait'
+  | 'hc run';
+
 export type NavSection =
   | 'crew-quarters'
   | 'mission-deck'
@@ -13,7 +28,14 @@ export type NavSection =
   | 'map-charts'
   | 'settings';
 
-export type InspectorTab = 'overview' | 'journal' | 'tools' | 'prompts' | 'reports';
+export type InspectorTab =
+  | 'overview'
+  | 'terminal'
+  | 'profile'
+  | 'journal'
+  | 'tools'
+  | 'prompts'
+  | 'reports';
 
 export interface PinnedNote {
   id: string;
@@ -51,17 +73,48 @@ export interface ReadinessCheck {
   note?: string;
 }
 
+export interface ToolHookEvent {
+  id: string;
+  timestamp: string;
+  tool: HookToolName;
+  target: string;
+  summary: string;
+  outcome: 'ok' | 'blocked' | 'error';
+}
+
+export interface TerminalBinding {
+  terminalId: string;
+  terminalName: string;
+  templateName: string;
+  agentRuntime: AgentRuntime;
+  cwd: string;
+  parentTerminalId: string;
+  terminalState: TerminalState;
+  firstMessageSent: {
+    sent: boolean;
+    reason?: string;
+  };
+  lastScreenPreview: string;
+  lastActivityAt: string;
+}
+
 export interface CrewMember {
   id: string;
   name: string;
   role: string;
+  rankTitle: string;
   tier: CrewTier;
   vesselOrUnit: string;
   motto: string;
   doctrine: string;
+  whatTheyDo: string;
+  signatureTrait: string;
+  fleetRelationships: string;
   portrait: string;
   status: CrewStatus;
   currentTask: string;
+  terminal: TerminalBinding;
+  hookEvents: ToolHookEvent[];
   pinnedNotes: PinnedNote[];
   journals: JournalEntry[];
   tools: FleetTool[];
@@ -106,6 +159,8 @@ export interface ChartWaypoint {
 export interface FleetState {
   missionName: string;
   shipStatus: 'Operational' | 'High Alert' | 'Anchored';
+  captainTerminalId: string;
+  workspaceCwd: string;
   voyageDay: number;
   etaDays: number;
   crew: CrewMember[];

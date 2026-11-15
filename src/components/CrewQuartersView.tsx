@@ -11,9 +11,11 @@ import {
   Clock,
   Anchor,
   Users,
+  Terminal,
 } from 'lucide-react';
-import { CrewMember, CrewStatus, CrewTier, InspectorTab } from '../types/fleet';
+import { CrewMember, CrewStatus, CrewTier, InspectorTab, TerminalState } from '../types/fleet';
 import { computeReadiness, getStatusStyles } from '../utils/fleetHelpers';
+import { getTerminalStateStyle } from '../utils/hcCommands';
 
 interface CrewQuartersViewProps {
   crew: CrewMember[];
@@ -36,6 +38,7 @@ export const CrewQuartersView: React.FC<CrewQuartersViewProps> = ({
 }) => {
   const [tierFilter, setTierFilter] = useState<'All' | CrewTier>('All');
   const [statusFilter, setStatusFilter] = useState<'All' | CrewStatus>('All');
+  const [terminalStateFilter, setTerminalStateFilter] = useState<'All' | TerminalState>('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
@@ -57,16 +60,21 @@ export const CrewQuartersView: React.FC<CrewQuartersViewProps> = ({
     return crew.filter((member) => {
       if (tierFilter !== 'All' && member.tier !== tierFilter) return false;
       if (statusFilter !== 'All' && member.status !== statusFilter) return false;
+      if (terminalStateFilter !== 'All' && member.terminal.terminalState !== terminalStateFilter) {
+        return false;
+      }
       if (!q) return true;
       return (
         member.name.toLowerCase().includes(q) ||
         member.role.toLowerCase().includes(q) ||
         member.motto.toLowerCase().includes(q) ||
         member.doctrine.toLowerCase().includes(q) ||
-        member.currentTask.toLowerCase().includes(q)
+        member.currentTask.toLowerCase().includes(q) ||
+        member.terminal.terminalName.toLowerCase().includes(q) ||
+        member.terminal.terminalId.toLowerCase().includes(q)
       );
     });
-  }, [crew, tierFilter, statusFilter, searchQuery]);
+  }, [crew, tierFilter, statusFilter, terminalStateFilter, searchQuery]);
 
   const renderStatusIcon = (status: CrewStatus) => {
     if (status === 'Mission Ready') return <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />;
@@ -96,7 +104,7 @@ export const CrewQuartersView: React.FC<CrewQuartersViewProps> = ({
             </h1>
           </div>
           <p className="mt-1 text-sm" style={{ color: 'var(--ink-2)' }}>
-            The people, journals, tools, and prompts that keep the ship moving.
+            1-to-1 crew roster mapped to persistent <code className="font-mono text-xs">hc</code> terminals, tool hooks, journals, and doctrines.
           </p>
         </div>
 
@@ -110,7 +118,7 @@ export const CrewQuartersView: React.FC<CrewQuartersViewProps> = ({
         >
           {(
             [
-              { key: 'All', label: 'Crew Members', value: counts.total, color: 'var(--ink)' },
+              { key: 'All', label: 'Crew Terminals', value: counts.total, color: 'var(--ink)' },
               { key: 'Mission Ready', label: 'Mission Ready', value: counts.ready, color: 'var(--ready)' },
               { key: 'In Task', label: 'In Task', value: counts.inTask, color: 'var(--task)' },
               { key: 'Off Duty', label: 'Off Duty', value: counts.offDuty, color: 'var(--off)' },
@@ -150,8 +158,8 @@ export const CrewQuartersView: React.FC<CrewQuartersViewProps> = ({
         </div>
       </div>
 
-      {/* Filter Tabs + Search + Grid/List Controls */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+      {/* Filter Tabs + Search + Terminal State + Grid/List Controls */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div
           role="tablist"
           aria-label="Filter crew by division"
@@ -180,8 +188,27 @@ export const CrewQuartersView: React.FC<CrewQuartersViewProps> = ({
           })}
         </div>
 
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1 sm:w-56">
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            aria-label="Filter by terminal state"
+            value={terminalStateFilter}
+            onChange={(e) => setTerminalStateFilter(e.target.value as 'All' | TerminalState)}
+            className="h-9 px-2.5 rounded border text-xs font-mono cursor-pointer"
+            style={{
+              backgroundColor: 'var(--parchment-raised)',
+              borderColor: 'var(--rule)',
+              color: 'var(--ink)',
+            }}
+          >
+            <option value="All">hc: all states</option>
+            <option value="working">hc: working</option>
+            <option value="idle">hc: idle</option>
+            <option value="blocked">hc: blocked</option>
+            <option value="error">hc: error</option>
+            <option value="offline">hc: offline</option>
+          </select>
+
+          <div className="relative flex-1 sm:w-52">
             <Search
               className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
               style={{ color: 'var(--ink-3)' }}
@@ -190,7 +217,7 @@ export const CrewQuartersView: React.FC<CrewQuartersViewProps> = ({
               type="search"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search crew..."
+              placeholder="Search crew or terminal..."
               aria-label="Search crew members"
               className="w-full h-9 pl-8 pr-3 rounded border text-xs transition-colors"
               style={{
@@ -249,7 +276,7 @@ export const CrewQuartersView: React.FC<CrewQuartersViewProps> = ({
           }}
         >
           <p className="font-display text-lg font-medium" style={{ color: 'var(--ink)' }}>
-            No crew members match this watch filter
+            No crew terminals match this watch filter
           </p>
           <p className="text-xs mt-1" style={{ color: 'var(--ink-3)' }}>
             Clear your search query or reset division filters to inspect all 18 officers.
@@ -259,6 +286,7 @@ export const CrewQuartersView: React.FC<CrewQuartersViewProps> = ({
             onClick={() => {
               setTierFilter('All');
               setStatusFilter('All');
+              setTerminalStateFilter('All');
               setSearchQuery('');
             }}
             className="mt-4 px-4 py-2 rounded text-xs font-medium cursor-pointer"
@@ -276,7 +304,9 @@ export const CrewQuartersView: React.FC<CrewQuartersViewProps> = ({
           {filteredCrew.map((member) => {
             const isSelected = member.id === selectedCrewId;
             const statusStyle = getStatusStyles(member.status);
+            const termStyle = getTerminalStateStyle(member.terminal.terminalState);
             const readiness = computeReadiness(member);
+            const latestHook = member.hookEvents[0];
 
             return (
               <article
@@ -305,7 +335,7 @@ export const CrewQuartersView: React.FC<CrewQuartersViewProps> = ({
                       className="w-full h-full object-cover object-top transition-transform duration-300 group-hover:scale-[1.03]"
                     />
                     <div
-                      className="absolute inset-0 bg-gradient-to-t from-[#0E1A2B]/80 via-transparent to-[#0E1A2B]/45"
+                      className="absolute inset-0 bg-gradient-to-t from-[#0E1A2B]/85 via-transparent to-[#0E1A2B]/50"
                       aria-hidden="true"
                     />
                     <div className="absolute top-2.5 left-3 right-3 flex items-center justify-between gap-2">
@@ -316,9 +346,20 @@ export const CrewQuartersView: React.FC<CrewQuartersViewProps> = ({
                         {readiness}%
                       </span>
                     </div>
+                    <div className="absolute bottom-2 left-3 right-3 flex items-center justify-between gap-2 text-[11px] font-mono text-[#E8DFCB]">
+                      <span className="truncate">
+                        {member.terminal.terminalId} · {member.terminal.terminalName}
+                      </span>
+                      <span
+                        className="shrink-0 font-semibold px-1.5 py-0.5 bg-[#0E1A2B]/85 border border-[#283F61]"
+                        style={{ color: termStyle.label === 'working' ? '#78D8A6' : '#E6BE6C' }}
+                      >
+                        {termStyle.label}
+                      </span>
+                    </div>
                   </div>
 
-                  {/* Officer Name, Motto & Status */}
+                  {/* Officer Name, Motto & Latest Hook */}
                   <div className="p-3.5 flex-1 flex flex-col justify-between gap-2.5">
                     <div>
                       <div className="flex items-baseline justify-between gap-2">
@@ -338,6 +379,15 @@ export const CrewQuartersView: React.FC<CrewQuartersViewProps> = ({
                       >
                         “{member.motto}”
                       </p>
+                      {latestHook && (
+                        <p
+                          className="mt-2 font-mono text-[11px] truncate"
+                          style={{ color: 'var(--ink-3)' }}
+                          title={`${latestHook.tool}: ${latestHook.target}`}
+                        >
+                          {latestHook.tool} · {latestHook.target}
+                        </p>
+                      )}
                     </div>
 
                     <div className="flex items-center justify-between gap-2 pt-2 border-t" style={{ borderColor: 'var(--rule)' }}>
@@ -349,7 +399,7 @@ export const CrewQuartersView: React.FC<CrewQuartersViewProps> = ({
                         <span>{statusStyle.label}</span>
                       </span>
                       <span
-                        className="text-[11px] truncate max-w-[160px]"
+                        className="text-[11px] truncate max-w-[150px]"
                         style={{ color: 'var(--ink-3)' }}
                         title={member.vesselOrUnit}
                       >
@@ -359,9 +409,9 @@ export const CrewQuartersView: React.FC<CrewQuartersViewProps> = ({
                   </div>
                 </button>
 
-                {/* Bottom Quick-Action Bar: Journal / Tools / Prompts / Reports */}
+                {/* Bottom Quick-Action Bar: Terminal / Journal / Tools / Prompts / Reports */}
                 <div
-                  className="grid grid-cols-4 border-t divide-x"
+                  className="grid grid-cols-5 border-t divide-x"
                   style={{
                     borderColor: 'var(--rule)',
                     backgroundColor: 'var(--parchment)',
@@ -369,6 +419,7 @@ export const CrewQuartersView: React.FC<CrewQuartersViewProps> = ({
                 >
                   {(
                     [
+                      { tab: 'terminal', label: 'Terminal', icon: Terminal },
                       { tab: 'journal', label: 'Journal', icon: BookOpen },
                       { tab: 'tools', label: 'Tools', icon: Wrench },
                       { tab: 'prompts', label: 'Prompts', icon: ScrollText },
@@ -381,14 +432,14 @@ export const CrewQuartersView: React.FC<CrewQuartersViewProps> = ({
                         key={action.tab}
                         type="button"
                         onClick={() => onSelectCrew(member.id, action.tab)}
-                        className="py-2 px-1 flex flex-col items-center justify-center gap-0.5 text-[11px] font-medium transition-colors cursor-pointer hover:bg-[var(--parchment-raised)]"
+                        className="py-2 px-1 flex flex-col items-center justify-center gap-0.5 text-[10px] font-medium transition-colors cursor-pointer hover:bg-[var(--parchment-raised)]"
                         style={{
                           color: 'var(--ink-2)',
                           borderColor: 'var(--rule)',
                         }}
                       >
                         <ActionIcon className="w-3.5 h-3.5" style={{ color: 'var(--brass-ink)' }} />
-                        <span>{action.label}</span>
+                        <span className="truncate max-w-full">{action.label}</span>
                       </button>
                     );
                   })}
@@ -417,9 +468,9 @@ export const CrewQuartersView: React.FC<CrewQuartersViewProps> = ({
                 }}
               >
                 <th className="py-2.5 px-3 font-semibold">Officer</th>
-                <th className="py-2.5 px-3 font-semibold">Role & Division</th>
+                <th className="py-2.5 px-3 font-semibold">hc Terminal</th>
                 <th className="py-2.5 px-3 font-semibold">Current Task</th>
-                <th className="py-2.5 px-3 font-semibold">Status</th>
+                <th className="py-2.5 px-3 font-semibold">Duty Status</th>
                 <th className="py-2.5 px-3 font-semibold text-right">Readiness</th>
                 <th className="py-2.5 px-3 font-semibold text-right">Inspect</th>
               </tr>
@@ -428,6 +479,7 @@ export const CrewQuartersView: React.FC<CrewQuartersViewProps> = ({
               {filteredCrew.map((member) => {
                 const isSelected = member.id === selectedCrewId;
                 const statusStyle = getStatusStyles(member.status);
+                const termStyle = getTerminalStateStyle(member.terminal.terminalState);
                 const readiness = computeReadiness(member);
                 return (
                   <tr
@@ -452,15 +504,19 @@ export const CrewQuartersView: React.FC<CrewQuartersViewProps> = ({
                           <div className="font-display font-semibold text-sm" style={{ color: 'var(--ink)' }}>
                             {member.name}
                           </div>
-                          <div className="text-[11px] italic" style={{ color: 'var(--ink-3)' }}>
-                            “{member.motto}”
+                          <div className="text-[11px]" style={{ color: 'var(--ink-3)' }}>
+                            {member.role} · {member.vesselOrUnit}
                           </div>
                         </div>
                       </div>
                     </td>
-                    <td className="py-2.5 px-3">
-                      <div className="font-medium" style={{ color: 'var(--ink)' }}>{member.role}</div>
-                      <div className="text-[11px]" style={{ color: 'var(--ink-3)' }}>{member.tier} · {member.vesselOrUnit}</div>
+                    <td className="py-2.5 px-3 font-mono text-[11px]">
+                      <div style={{ color: 'var(--ink)' }}>
+                        {member.terminal.terminalId} · {member.terminal.terminalName}
+                      </div>
+                      <div style={{ color: termStyle.color }}>
+                        {termStyle.label} ({member.terminal.agentRuntime})
+                      </div>
                     </td>
                     <td className="py-2.5 px-3 max-w-[240px]">
                       <span className="line-clamp-1" style={{ color: 'var(--ink-2)' }}>
@@ -484,7 +540,7 @@ export const CrewQuartersView: React.FC<CrewQuartersViewProps> = ({
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          onSelectCrew(member.id, 'overview');
+                          onSelectCrew(member.id, 'terminal');
                         }}
                         className="px-2.5 py-1 rounded border text-[11px] font-medium cursor-pointer"
                         style={{
@@ -493,7 +549,7 @@ export const CrewQuartersView: React.FC<CrewQuartersViewProps> = ({
                           backgroundColor: 'var(--parchment-raised)',
                         }}
                       >
-                        Open
+                        Terminal
                       </button>
                     </td>
                   </tr>

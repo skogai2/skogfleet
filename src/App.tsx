@@ -4,10 +4,13 @@ import {
   CrewStatus,
   FleetState,
   FleetTool,
+  HookToolName,
   InspectorTab,
   MissionObjective,
   NavSection,
+  TerminalBinding,
 } from './types/fleet';
+import { parseExternalHcJson } from './utils/hcCommands';
 import { TopMasthead } from './components/TopMasthead';
 import { SidebarNav } from './components/SidebarNav';
 import { CrewQuartersView } from './components/CrewQuartersView';
@@ -21,15 +24,33 @@ import { ShipSystemsView } from './components/ShipSystemsView';
 import { MapChartsView } from './components/MapChartsView';
 import { SettingsView } from './components/SettingsView';
 
-const STORAGE_KEY = 'nelson.fleet.state.v1';
+const STORAGE_KEY = 'nelson.fleet.state.v2';
 const THEME_KEY = 'nelson.fleet.dark.v1';
+
+function isValidFleetState(candidate: unknown): candidate is FleetState {
+  if (!candidate || typeof candidate !== 'object') return false;
+  const parsed = candidate as FleetState;
+  return (
+    typeof parsed.captainTerminalId === 'string' &&
+    typeof parsed.workspaceCwd === 'string' &&
+    Array.isArray(parsed.crew) &&
+    parsed.crew.length === INITIAL_FLEET_STATE.crew.length &&
+    parsed.crew.every(
+      (c) =>
+        Boolean(c.terminal) &&
+        typeof c.terminal.terminalId === 'string' &&
+        Array.isArray(c.hookEvents) &&
+        typeof c.rankTitle === 'string'
+    )
+  );
+}
 
 function loadInitialFleetState(): FleetState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw) as FleetState;
-      if (parsed && Array.isArray(parsed.crew) && parsed.crew.length === INITIAL_FLEET_STATE.crew.length) {
+      const parsed = JSON.parse(raw);
+      if (isValidFleetState(parsed)) {
         return parsed;
       }
     }
@@ -93,9 +114,9 @@ export const App: React.FC = () => {
     setMobileInspectorOpen(true);
   };
 
-  const handleJumpToOfficer = (id: string) => {
+  const handleJumpToOfficer = (id: string, tab: InspectorTab = 'overview') => {
     setSelectedCrewId(id);
-    setInspectorTab('overview');
+    setInspectorTab(tab);
     setActiveSection('crew-quarters');
     setMobileInspectorOpen(true);
   };
@@ -112,6 +133,128 @@ export const App: React.FC = () => {
       ...prev,
       crew: prev.crew.map((m) => (m.id === memberId ? { ...m, currentTask } : m)),
     }));
+  };
+
+  const handleUpdateTerminal = (memberId: string, patch: Partial<TerminalBinding>) => {
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    setFleet((prev) => ({
+      ...prev,
+      crew: prev.crew.map((m) =>
+        m.id === memberId
+          ? {
+              ...m,
+              terminal: {
+                ...m.terminal,
+                ...patch,
+                lastActivityAt: `${hh}:${mm}`,
+              },
+            }
+          : m
+      ),
+    }));
+  };
+
+  const handleAddHookEvent = (
+    memberId: string,
+    tool: HookToolName,
+    target: string,
+    summary: string,
+    outcome: 'ok' | 'blocked' | 'error'
+  ) => {
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const ts = `${hh}:${mm}`;
+    setFleet((prev) => ({
+      ...prev,
+      crew: prev.crew.map((m) =>
+        m.id === memberId
+          ? {
+              ...m,
+              terminal: {
+                ...m.terminal,
+                lastActivityAt: ts,
+              },
+              hookEvents: [
+                {
+                  id: `ev-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                  timestamp: ts,
+                  tool,
+                  target,
+                  summary,
+                  outcome,
+                },
+                ...m.hookEvents,
+              ],
+            }
+          : m
+      ),
+    }));
+  };
+
+  const handleUpdateCaptainConfig = (captainTerminalId: string, workspaceCwd: string) => {
+    setFleet((prev) => ({
+      ...prev,
+      captainTerminalId,
+      workspaceCwd,
+    }));
+  };
+
+  const handleIngestHcJson = (rawJson: string): { updatedTerminals: number; appendedEvents: number } => {
+    const records = parseExternalHcJson(rawJson);
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    const ts = `${hh}:${mm}`;
+
+    let updatedTerminals = 0;
+    let appendedEvents = 0;
+
+    setFleet((prev) => ({
+      ...prev,
+      crew: prev.crew.map((member) => {
+        const matches = records.filter(
+          (r) =>
+            r.terminalMatch &&
+            (r.terminalMatch === member.terminal.terminalId ||
+              r.terminalMatch === member.terminal.terminalName ||
+              r.terminalMatch === member.id)
+        );
+        if (matches.length === 0) return member;
+
+        updatedTerminals += 1;
+        let nextTerminal = { ...member.terminal, lastActivityAt: ts };
+        const newEvents = [...member.hookEvents];
+
+        for (const rec of matches) {
+          if (rec.terminalState) nextTerminal.terminalState = rec.terminalState;
+          if (rec.cwd) nextTerminal.cwd = rec.cwd;
+          if (rec.screenPreview) nextTerminal.lastScreenPreview = rec.screenPreview;
+
+          if (rec.tool || rec.summary) {
+            appendedEvents += 1;
+            newEvents.unshift({
+              id: `ev-ing-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              timestamp: ts,
+              tool: rec.tool || 'hc read',
+              target: rec.target || nextTerminal.cwd,
+              summary: rec.summary || 'Synced via hc JSON ingest',
+              outcome: rec.outcome || 'ok',
+            });
+          }
+        }
+
+        return {
+          ...member,
+          terminal: nextTerminal,
+          hookEvents: newEvents,
+        };
+      }),
+    }));
+
+    return { updatedTerminals, appendedEvents };
   };
 
   const handleToggleNote = (memberId: string, noteId: string) => {
@@ -316,6 +459,10 @@ export const App: React.FC = () => {
     }));
   };
 
+  const handleImportFleetJson = (nextState: FleetState) => {
+    setFleet(nextState);
+  };
+
   const handleResetState = () => {
     setFleet(INITIAL_FLEET_STATE);
     try {
@@ -369,6 +516,8 @@ export const App: React.FC = () => {
               <MissionDeckView
                 missionName={fleet.missionName}
                 shipStatus={fleet.shipStatus}
+                captainTerminalId={fleet.captainTerminalId}
+                workspaceCwd={fleet.workspaceCwd}
                 voyageDay={fleet.voyageDay}
                 etaDays={fleet.etaDays}
                 crew={fleet.crew}
@@ -376,6 +525,7 @@ export const App: React.FC = () => {
                 onToggleObjective={handleToggleObjective}
                 onAddObjective={handleAddObjective}
                 onUpdateShipStatus={handleUpdateShipStatus}
+                onUpdateCaptainConfig={handleUpdateCaptainConfig}
                 onAdvanceDay={handleAdvanceDay}
                 onInspectOfficer={handleJumpToOfficer}
               />
@@ -386,6 +536,7 @@ export const App: React.FC = () => {
                 crew={fleet.crew}
                 voyageDay={fleet.voyageDay}
                 onAddJournal={handleAddJournal}
+                onIngestHcJson={handleIngestHcJson}
                 onInspectOfficer={handleJumpToOfficer}
               />
             )}
@@ -437,6 +588,7 @@ export const App: React.FC = () => {
                 fleetState={fleet}
                 darkMode={darkMode}
                 onToggleDarkMode={() => setDarkMode((d) => !d)}
+                onImportFleetJson={handleImportFleetJson}
                 onResetState={handleResetState}
               />
             )}
@@ -445,10 +597,13 @@ export const App: React.FC = () => {
           {activeSection === 'crew-quarters' && (
             <OfficerInspector
               member={selectedMember}
+              captainTerminalId={fleet.captainTerminalId}
               activeTab={inspectorTab}
               onTabChange={setInspectorTab}
               onUpdateStatus={handleUpdateStatus}
               onUpdateTask={handleUpdateTask}
+              onUpdateTerminal={handleUpdateTerminal}
+              onAddHookEvent={handleAddHookEvent}
               onToggleNote={handleToggleNote}
               onAddNote={handleAddNote}
               onDeleteNote={handleDeleteNote}

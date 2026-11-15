@@ -12,21 +12,45 @@ import {
   Check,
   Compass,
   X,
+  Terminal,
+  UserCheck,
 } from 'lucide-react';
 import {
+  AgentRuntime,
   CrewMember,
   CrewStatus,
   FleetTool,
+  HookToolName,
   InspectorTab,
+  TerminalBinding,
+  TerminalState,
 } from '../types/fleet';
 import { computeReadiness, getStatusStyles } from '../utils/fleetHelpers';
+import {
+  buildHcGetCommand,
+  buildHcInterruptCommand,
+  buildHcReadCommand,
+  buildHcRunCommand,
+  buildHcSendCommand,
+  buildHcTemplateMarkdown,
+  getTerminalStateStyle,
+} from '../utils/hcCommands';
 
 interface OfficerInspectorProps {
   member: CrewMember;
+  captainTerminalId: string;
   activeTab: InspectorTab;
   onTabChange: (tab: InspectorTab) => void;
   onUpdateStatus: (memberId: string, status: CrewStatus) => void;
   onUpdateTask: (memberId: string, task: string) => void;
+  onUpdateTerminal: (memberId: string, patch: Partial<TerminalBinding>) => void;
+  onAddHookEvent: (
+    memberId: string,
+    tool: HookToolName,
+    target: string,
+    summary: string,
+    outcome: 'ok' | 'blocked' | 'error'
+  ) => void;
   onToggleNote: (memberId: string, noteId: string) => void;
   onAddNote: (memberId: string, text: string) => void;
   onDeleteNote: (memberId: string, noteId: string) => void;
@@ -40,6 +64,8 @@ interface OfficerInspectorProps {
 
 const TABS: Array<{ id: InspectorTab; label: string }> = [
   { id: 'overview', label: 'Overview' },
+  { id: 'terminal', label: 'Terminal' },
+  { id: 'profile', label: 'Profile' },
   { id: 'journal', label: 'Journal' },
   { id: 'tools', label: 'Tools' },
   { id: 'prompts', label: 'Prompts' },
@@ -48,10 +74,13 @@ const TABS: Array<{ id: InspectorTab; label: string }> = [
 
 export const OfficerInspector: React.FC<OfficerInspectorProps> = ({
   member,
+  captainTerminalId,
   activeTab,
   onTabChange,
   onUpdateStatus,
   onUpdateTask,
+  onUpdateTerminal,
+  onAddHookEvent,
   onToggleNote,
   onAddNote,
   onDeleteNote,
@@ -72,31 +101,44 @@ export const OfficerInspector: React.FC<OfficerInspectorProps> = ({
   const [promptSummary, setPromptSummary] = useState('');
   const [promptBody, setPromptBody] = useState('');
   const [showAddPrompt, setShowAddPrompt] = useState(false);
-  const [copiedPromptId, setCopiedPromptId] = useState<string | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   const [editingTask, setEditingTask] = useState(false);
   const [taskDraft, setTaskDraft] = useState(member.currentTask);
+
+  // Terminal tab state
+  const [sendDraft, setSendDraft] = useState(member.currentTask);
+  const [sendWait, setSendWait] = useState(false);
+  const [useTemplateLaunch, setUseTemplateLaunch] = useState(true);
+  const [showTemplateMd, setShowTemplateMd] = useState(false);
+
+  // Manual hook event composer
+  const [hookTool, setHookTool] = useState<HookToolName>('Read');
+  const [hookTarget, setHookTarget] = useState('');
+  const [hookSummary, setHookSummary] = useState('');
 
   useEffect(() => {
     setEditingTask(false);
     setAddingNote(false);
     setShowAddPrompt(false);
+    setShowTemplateMd(false);
     setTaskDraft(member.currentTask);
+    setSendDraft(member.currentTask);
   }, [member.id, member.currentTask]);
 
   const readiness = computeReadiness(member);
   const statusStyles = getStatusStyles(member.status);
+  const termStyle = getTerminalStateStyle(member.terminal.terminalState);
   const latestJournal = member.journals[0];
 
-  // Semicircle gauge math (radius 54, circumference pi * r = ~169.65)
   const radius = 54;
   const arcLength = Math.PI * radius;
   const filledLength = (readiness / 100) * arcLength;
 
-  const handleCopyPrompt = (id: string, text: string) => {
+  const copyText = (key: string, text: string) => {
     navigator.clipboard?.writeText(text).catch(() => {});
-    setCopiedPromptId(id);
-    setTimeout(() => setCopiedPromptId(null), 1600);
+    setCopiedKey(key);
+    setTimeout(() => setCopiedKey(null), 1600);
   };
 
   const handleSubmitNote = (e: React.FormEvent) => {
@@ -130,11 +172,32 @@ export const OfficerInspector: React.FC<OfficerInspectorProps> = ({
     setShowAddPrompt(false);
   };
 
+  const handleSubmitHook = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!hookTarget.trim() && !hookSummary.trim()) return;
+    onAddHookEvent(
+      member.id,
+      hookTool,
+      hookTarget.trim() || member.terminal.cwd,
+      hookSummary.trim() || `${hookTool} event recorded`,
+      'ok'
+    );
+    setHookTarget('');
+    setHookSummary('');
+  };
+
   const toolStatusColor = (status: FleetTool['status']) => {
     if (status === 'Online') return 'var(--ready)';
     if (status === 'Calibrating') return 'var(--task)';
     return 'var(--danger)';
   };
+
+  const hcRunCmd = buildHcRunCommand(member, captainTerminalId, sendDraft, useTemplateLaunch);
+  const hcSendCmd = buildHcSendCommand(member, sendDraft, sendWait);
+  const hcReadCmd = buildHcReadCommand(member, 100);
+  const hcGetCmd = buildHcGetCommand(member);
+  const hcInterruptCmd = buildHcInterruptCommand(member);
+  const templateMd = buildHcTemplateMarkdown(member);
 
   const content = (
     <div
@@ -166,15 +229,20 @@ export const OfficerInspector: React.FC<OfficerInspectorProps> = ({
             style={{ borderColor: 'var(--brass)' }}
           />
           <div className="min-w-0 flex-1">
-            <div
-              className="text-[10px] font-semibold uppercase tracking-[0.12em] px-2 py-0.5 inline-block border"
-              style={{
-                backgroundColor: 'var(--navy)',
-                color: '#FAF5EA',
-                borderColor: 'var(--brass)',
-              }}
-            >
-              {member.role}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span
+                className="text-[10px] font-semibold uppercase tracking-[0.12em] px-2 py-0.5 border"
+                style={{
+                  backgroundColor: 'var(--navy)',
+                  color: '#FAF5EA',
+                  borderColor: 'var(--brass)',
+                }}
+              >
+                {member.role}
+              </span>
+              <span className="font-mono text-[11px]" style={{ color: termStyle.color }}>
+                {member.terminal.terminalId} · {termStyle.label}
+              </span>
             </div>
             <h2
               className="font-display text-2xl font-semibold leading-tight mt-1"
@@ -201,23 +269,47 @@ export const OfficerInspector: React.FC<OfficerInspectorProps> = ({
         >
           <div className="flex items-center justify-between gap-2">
             <label htmlFor="officer-status-select" className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--ink-3)' }}>
-              Duty Status
+              Duty & Terminal
             </label>
-            <select
-              id="officer-status-select"
-              value={member.status}
-              onChange={(e) => onUpdateStatus(member.id, e.target.value as CrewStatus)}
-              className="text-xs font-medium px-2 py-1 rounded border cursor-pointer"
-              style={{
-                backgroundColor: statusStyles.bgColor,
-                color: statusStyles.textColor,
-                borderColor: 'var(--rule)',
-              }}
-            >
-              <option value="Mission Ready">Mission Ready</option>
-              <option value="In Task">In Task</option>
-              <option value="Off Duty">Off Duty</option>
-            </select>
+            <div className="flex items-center gap-1.5">
+              <select
+                id="officer-status-select"
+                value={member.status}
+                onChange={(e) => onUpdateStatus(member.id, e.target.value as CrewStatus)}
+                className="text-xs font-medium px-2 py-1 rounded border cursor-pointer"
+                style={{
+                  backgroundColor: statusStyles.bgColor,
+                  color: statusStyles.textColor,
+                  borderColor: 'var(--rule)',
+                }}
+              >
+                <option value="Mission Ready">Mission Ready</option>
+                <option value="In Task">In Task</option>
+                <option value="Off Duty">Off Duty</option>
+              </select>
+
+              <select
+                aria-label="hc Terminal State"
+                value={member.terminal.terminalState}
+                onChange={(e) =>
+                  onUpdateTerminal(member.id, {
+                    terminalState: e.target.value as TerminalState,
+                  })
+                }
+                className="text-xs font-mono px-2 py-1 rounded border cursor-pointer"
+                style={{
+                  backgroundColor: termStyle.bg,
+                  color: termStyle.color,
+                  borderColor: 'var(--rule)',
+                }}
+              >
+                <option value="working">working</option>
+                <option value="idle">idle</option>
+                <option value="blocked">blocked</option>
+                <option value="error">error</option>
+                <option value="offline">offline</option>
+              </select>
+            </div>
           </div>
 
           {editingTask ? (
@@ -251,7 +343,7 @@ export const OfficerInspector: React.FC<OfficerInspectorProps> = ({
           ) : (
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs leading-snug" style={{ color: 'var(--ink-2)' }}>
-                <span className="font-semibold" style={{ color: 'var(--ink)' }}>Assignment: </span>
+                <span className="font-semibold" style={{ color: 'var(--ink)' }}>Task: </span>
                 {member.currentTask}
               </p>
               <button
@@ -273,8 +365,7 @@ export const OfficerInspector: React.FC<OfficerInspectorProps> = ({
         <div
           role="tablist"
           aria-label="Officer inspector tabs"
-          className="mt-3 grid grid-cols-5 border rounded overflow-hidden"
-          style={{ borderColor: 'var(--rule)' }}
+          className="mt-3 flex flex-wrap gap-1"
         >
           {TABS.map((t) => {
             const active = activeTab === t.id;
@@ -285,10 +376,11 @@ export const OfficerInspector: React.FC<OfficerInspectorProps> = ({
                 role="tab"
                 aria-selected={active}
                 onClick={() => onTabChange(t.id)}
-                className="py-1.5 text-[11px] font-semibold transition-colors cursor-pointer whitespace-nowrap"
+                className="px-2.5 py-1.5 rounded border text-[11px] font-semibold transition-colors cursor-pointer whitespace-nowrap"
                 style={{
                   backgroundColor: active ? 'var(--navy)' : 'var(--parchment)',
                   color: active ? '#E6BE6C' : 'var(--ink-2)',
+                  borderColor: active ? 'var(--brass)' : 'var(--rule)',
                 }}
               >
                 {t.label}
@@ -316,6 +408,43 @@ export const OfficerInspector: React.FC<OfficerInspectorProps> = ({
               <p className="mt-1 text-sm font-medium leading-snug" style={{ color: 'var(--ink)' }}>
                 “{member.doctrine}”
               </p>
+            </div>
+
+            {/* 1-to-1 Terminal Quick Summary */}
+            <div
+              className="p-3 rounded border space-y-1.5"
+              style={{
+                backgroundColor: 'var(--parchment)',
+                borderColor: 'var(--rule)',
+              }}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold uppercase tracking-wider flex items-center gap-1.5" style={{ color: 'var(--ink)' }}>
+                  <Terminal className="w-3.5 h-3.5" style={{ color: 'var(--brass-ink)' }} />
+                  <span>Bound Terminal: {member.terminal.terminalName}</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onTabChange('terminal')}
+                  className="text-[11px] font-medium underline cursor-pointer"
+                  style={{ color: 'var(--brass-ink)' }}
+                >
+                  Open Terminal →
+                </button>
+              </div>
+              <div className="font-mono text-[11px] truncate" style={{ color: 'var(--ink-3)' }}>
+                cwd: {member.terminal.cwd} · parent: {member.terminal.parentTerminalId}
+              </div>
+              <div
+                className="p-2 rounded border font-mono text-[11px] leading-snug"
+                style={{
+                  backgroundColor: 'var(--navy)',
+                  borderColor: 'var(--navy-border)',
+                  color: '#E6DEC9',
+                }}
+              >
+                {member.terminal.lastScreenPreview}
+              </div>
             </div>
 
             {/* Pinned Notes */}
@@ -435,7 +564,7 @@ export const OfficerInspector: React.FC<OfficerInspectorProps> = ({
               )}
             </div>
 
-            {/* Favorite Tools & Active Prompt Templates Side by Side */}
+            {/* Favorite Tools & Active Prompt Templates */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t" style={{ borderColor: 'var(--rule)' }}>
               <div>
                 <div className="flex items-center justify-between mb-1.5">
@@ -587,6 +716,356 @@ export const OfficerInspector: React.FC<OfficerInspectorProps> = ({
               </div>
             </div>
           </>
+        )}
+
+        {activeTab === 'terminal' && (
+          <div className="space-y-4">
+            {/* 1-to-1 hc Binding Configuration */}
+            <div
+              className="p-3 rounded border space-y-2.5"
+              style={{ backgroundColor: 'var(--parchment)', borderColor: 'var(--rule)' }}
+            >
+              <div className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--brass-ink)' }}>
+                1-to-1 herdr-core Terminal Binding
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <label className="block text-[10px] uppercase mb-0.5" style={{ color: 'var(--ink-3)' }}>
+                    Terminal Name
+                  </label>
+                  <input
+                    type="text"
+                    value={member.terminal.terminalName}
+                    onChange={(e) => onUpdateTerminal(member.id, { terminalName: e.target.value })}
+                    className="w-full px-2 py-1 rounded border font-mono text-xs"
+                    style={{ backgroundColor: 'var(--parchment-raised)', borderColor: 'var(--rule)', color: 'var(--ink)' }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase mb-0.5" style={{ color: 'var(--ink-3)' }}>
+                    Agent Runtime
+                  </label>
+                  <select
+                    value={member.terminal.agentRuntime}
+                    onChange={(e) => onUpdateTerminal(member.id, { agentRuntime: e.target.value as AgentRuntime })}
+                    className="w-full px-2 py-1 rounded border font-mono text-xs cursor-pointer"
+                    style={{ backgroundColor: 'var(--parchment-raised)', borderColor: 'var(--rule)', color: 'var(--ink)' }}
+                  >
+                    <option value="claude">claude</option>
+                    <option value="pi">pi</option>
+                    <option value="codex">codex</option>
+                    <option value="custom">custom</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase mb-0.5" style={{ color: 'var(--ink-3)' }}>
+                    Template (~/.config/herdr-core/templates)
+                  </label>
+                  <input
+                    type="text"
+                    value={member.terminal.templateName}
+                    onChange={(e) => onUpdateTerminal(member.id, { templateName: e.target.value })}
+                    className="w-full px-2 py-1 rounded border font-mono text-xs"
+                    style={{ backgroundColor: 'var(--parchment-raised)', borderColor: 'var(--rule)', color: 'var(--ink)' }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase mb-0.5" style={{ color: 'var(--ink-3)' }}>
+                    Parent Terminal
+                  </label>
+                  <input
+                    type="text"
+                    value={member.terminal.parentTerminalId}
+                    onChange={(e) => onUpdateTerminal(member.id, { parentTerminalId: e.target.value })}
+                    className="w-full px-2 py-1 rounded border font-mono text-xs"
+                    style={{ backgroundColor: 'var(--parchment-raised)', borderColor: 'var(--rule)', color: 'var(--ink)' }}
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-[10px] uppercase mb-0.5" style={{ color: 'var(--ink-3)' }}>
+                    Working Directory (--cwd)
+                  </label>
+                  <input
+                    type="text"
+                    value={member.terminal.cwd}
+                    onChange={(e) => onUpdateTerminal(member.id, { cwd: e.target.value })}
+                    className="w-full px-2 py-1 rounded border font-mono text-xs"
+                    style={{ backgroundColor: 'var(--parchment-raised)', borderColor: 'var(--rule)', color: 'var(--ink)' }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* hc CLI Dispatch Builder */}
+            <div
+              className="p-3 rounded border space-y-2.5"
+              style={{ backgroundColor: 'var(--parchment)', borderColor: 'var(--rule)' }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--brass-ink)' }}>
+                  hc Command Dispatch
+                </span>
+                <label className="flex items-center gap-1.5 text-[11px] cursor-pointer" style={{ color: 'var(--ink-2)' }}>
+                  <input
+                    type="checkbox"
+                    checked={useTemplateLaunch}
+                    onChange={(e) => setUseTemplateLaunch(e.target.checked)}
+                  />
+                  Use template
+                </label>
+              </div>
+
+              <textarea
+                rows={2}
+                value={sendDraft}
+                onChange={(e) => setSendDraft(e.target.value)}
+                placeholder="Scoped task or follow-up message..."
+                className="w-full p-2 rounded border text-xs"
+                style={{
+                  backgroundColor: 'var(--parchment-raised)',
+                  borderColor: 'var(--rule)',
+                  color: 'var(--ink)',
+                }}
+              />
+
+              {/* hc run --bg */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="font-mono font-semibold" style={{ color: 'var(--ink-2)' }}>
+                    Launch (--bg, report to {captainTerminalId})
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => copyText('hc-run', hcRunCmd)}
+                    className="inline-flex items-center gap-1 font-medium cursor-pointer"
+                    style={{ color: copiedKey === 'hc-run' ? 'var(--ready)' : 'var(--brass-ink)' }}
+                  >
+                    {copiedKey === 'hc-run' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                    {copiedKey === 'hc-run' ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+                <pre
+                  className="p-2 rounded text-[11px] font-mono whitespace-pre-wrap break-all"
+                  style={{ backgroundColor: 'var(--navy)', color: '#E8DFCB' }}
+                >
+                  {hcRunCmd}
+                </pre>
+              </div>
+
+              {/* hc send */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-[11px]">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-semibold" style={{ color: 'var(--ink-2)' }}>
+                      Steer / Message
+                    </span>
+                    <label className="flex items-center gap-1 cursor-pointer" style={{ color: 'var(--ink-3)' }}>
+                      <input
+                        type="checkbox"
+                        checked={sendWait}
+                        onChange={(e) => setSendWait(e.target.checked)}
+                      />
+                      --wait
+                    </label>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => copyText('hc-send', hcSendCmd)}
+                    className="inline-flex items-center gap-1 font-medium cursor-pointer"
+                    style={{ color: copiedKey === 'hc-send' ? 'var(--ready)' : 'var(--brass-ink)' }}
+                  >
+                    {copiedKey === 'hc-send' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                    {copiedKey === 'hc-send' ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+                <pre
+                  className="p-2 rounded text-[11px] font-mono whitespace-pre-wrap break-all"
+                  style={{ backgroundColor: 'var(--navy)', color: '#E8DFCB' }}
+                >
+                  {hcSendCmd}
+                </pre>
+              </div>
+
+              {/* Quick Inspection Commands */}
+              <div className="grid grid-cols-3 gap-1.5 pt-1">
+                {[
+                  { key: 'read', label: 'Copy hc read', cmd: hcReadCmd },
+                  { key: 'get', label: 'Copy hc get', cmd: hcGetCmd },
+                  { key: 'int', label: 'Copy interrupt', cmd: hcInterruptCmd },
+                ].map((btn) => (
+                  <button
+                    key={btn.key}
+                    type="button"
+                    onClick={() => copyText(btn.key, btn.cmd)}
+                    className="py-1.5 px-2 rounded border text-[11px] font-mono cursor-pointer truncate"
+                    style={{
+                      backgroundColor: 'var(--parchment-raised)',
+                      borderColor: 'var(--rule)',
+                      color: copiedKey === btn.key ? 'var(--ready)' : 'var(--ink)',
+                    }}
+                  >
+                    {copiedKey === btn.key ? 'Copied!' : btn.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Template Markdown Toggle */}
+              <div className="pt-1 border-t" style={{ borderColor: 'var(--rule)' }}>
+                <div className="flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setShowTemplateMd((v) => !v)}
+                    className="text-[11px] font-medium underline cursor-pointer"
+                    style={{ color: 'var(--brass-ink)' }}
+                  >
+                    {showTemplateMd ? 'Hide' : 'View'} {member.terminal.templateName}.md template
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => copyText('tpl-md', templateMd)}
+                    className="text-[11px] font-medium cursor-pointer"
+                    style={{ color: copiedKey === 'tpl-md' ? 'var(--ready)' : 'var(--brass-ink)' }}
+                  >
+                    {copiedKey === 'tpl-md' ? 'Copied .md' : 'Copy .md'}
+                  </button>
+                </div>
+                {showTemplateMd && (
+                  <pre
+                    className="mt-2 p-2.5 rounded border text-[11px] font-mono whitespace-pre-wrap max-h-48 overflow-y-auto"
+                    style={{
+                      backgroundColor: 'var(--parchment-raised)',
+                      borderColor: 'var(--rule)',
+                      color: 'var(--ink-2)',
+                    }}
+                  >
+                    {templateMd}
+                  </pre>
+                )}
+              </div>
+            </div>
+
+            {/* Hooked Tool Usage Event Stream */}
+            <div className="space-y-2.5">
+              <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--ink)' }}>
+                Hooked Tool Events ({member.hookEvents.length})
+              </h3>
+
+              <form
+                onSubmit={handleSubmitHook}
+                className="p-2.5 rounded border space-y-2"
+                style={{ backgroundColor: 'var(--parchment)', borderColor: 'var(--rule)' }}
+              >
+                <div className="grid grid-cols-3 gap-1.5">
+                  <select
+                    value={hookTool}
+                    onChange={(e) => setHookTool(e.target.value as HookToolName)}
+                    className="px-2 py-1 rounded border text-xs font-mono cursor-pointer"
+                    style={{ backgroundColor: 'var(--parchment-raised)', borderColor: 'var(--rule)', color: 'var(--ink)' }}
+                  >
+                    <option value="Read">Read</option>
+                    <option value="Edit">Edit</option>
+                    <option value="Write">Write</option>
+                    <option value="Bash">Bash</option>
+                    <option value="Grep">Grep</option>
+                    <option value="hc send">hc send</option>
+                    <option value="hc read">hc read</option>
+                  </select>
+                  <input
+                    type="text"
+                    value={hookTarget}
+                    onChange={(e) => setHookTarget(e.target.value)}
+                    placeholder="File or command..."
+                    className="col-span-2 px-2 py-1 rounded border text-xs font-mono"
+                    style={{ backgroundColor: 'var(--parchment-raised)', borderColor: 'var(--rule)', color: 'var(--ink)' }}
+                  />
+                </div>
+                <div className="flex gap-1.5">
+                  <input
+                    type="text"
+                    value={hookSummary}
+                    onChange={(e) => setHookSummary(e.target.value)}
+                    placeholder="Hook event summary..."
+                    className="flex-1 px-2 py-1 rounded border text-xs"
+                    style={{ backgroundColor: 'var(--parchment-raised)', borderColor: 'var(--rule)', color: 'var(--ink)' }}
+                  />
+                  <button
+                    type="submit"
+                    className="px-3 py-1 rounded text-xs font-medium cursor-pointer"
+                    style={{ backgroundColor: 'var(--navy)', color: '#FAF5EA' }}
+                  >
+                    Append
+                  </button>
+                </div>
+              </form>
+
+              <ul className="space-y-1.5">
+                {member.hookEvents.map((ev) => (
+                  <li
+                    key={ev.id}
+                    className="p-2.5 rounded border text-xs"
+                    style={{ backgroundColor: 'var(--parchment)', borderColor: 'var(--rule)' }}
+                  >
+                    <div className="flex items-center justify-between gap-2 font-mono text-[11px]">
+                      <span className="font-semibold" style={{ color: 'var(--brass-ink)' }}>
+                        {ev.tool} · {ev.target}
+                      </span>
+                      <span style={{ color: 'var(--ink-3)' }}>{ev.timestamp}</span>
+                    </div>
+                    <p className="mt-1" style={{ color: 'var(--ink-2)' }}>
+                      {ev.summary}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'profile' && (
+          <div className="space-y-4">
+            <div
+              className="p-3 rounded border"
+              style={{ backgroundColor: 'var(--parchment)', borderColor: 'var(--rule)' }}
+            >
+              <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--brass-ink)' }}>
+                <UserCheck className="w-3.5 h-3.5" />
+                <span>Title & Rank</span>
+              </div>
+              <p className="text-sm font-semibold mt-1" style={{ color: 'var(--ink)' }}>
+                {member.rankTitle}
+              </p>
+              <p className="text-xs mt-0.5" style={{ color: 'var(--ink-3)' }}>
+                {member.vesselOrUnit} · {member.tier} Tier
+              </p>
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--ink)' }}>
+                What They Do
+              </h3>
+              <p className="text-xs leading-relaxed" style={{ color: 'var(--ink-2)' }}>
+                {member.whatTheyDo}
+              </p>
+            </div>
+
+            <div className="space-y-1 pt-2 border-t" style={{ borderColor: 'var(--rule)' }}>
+              <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--ink)' }}>
+                Signature Trait
+              </h3>
+              <p className="text-xs leading-relaxed" style={{ color: 'var(--ink-2)' }}>
+                {member.signatureTrait}
+              </p>
+            </div>
+
+            <div className="space-y-1 pt-2 border-t" style={{ borderColor: 'var(--rule)' }}>
+              <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--ink)' }}>
+                Relationship to the Fleet
+              </h3>
+              <p className="text-xs leading-relaxed" style={{ color: 'var(--ink-2)' }}>
+                {member.fleetRelationships}
+              </p>
+            </div>
+          </div>
         )}
 
         {activeTab === 'journal' && (
@@ -795,15 +1274,15 @@ export const OfficerInspector: React.FC<OfficerInspectorProps> = ({
                   </div>
                   <button
                     type="button"
-                    onClick={() => handleCopyPrompt(p.id, p.template)}
+                    onClick={() => copyText(p.id, p.template)}
                     className="px-2.5 py-1 rounded border text-[11px] font-medium inline-flex items-center gap-1 shrink-0 cursor-pointer"
                     style={{
                       borderColor: 'var(--rule)',
                       backgroundColor: 'var(--parchment-raised)',
-                      color: copiedPromptId === p.id ? 'var(--ready)' : 'var(--ink)',
+                      color: copiedKey === p.id ? 'var(--ready)' : 'var(--ink)',
                     }}
                   >
-                    {copiedPromptId === p.id ? (
+                    {copiedKey === p.id ? (
                       <>
                         <Check className="w-3 h-3" /> Copied
                       </>
@@ -852,9 +1331,9 @@ export const OfficerInspector: React.FC<OfficerInspectorProps> = ({
               </div>
               <div>
                 <div className="font-mono-num text-xl font-bold" style={{ color: 'var(--ink)' }}>
-                  {member.journals.length}
+                  {member.hookEvents.length}
                 </div>
-                <div className="text-[11px]" style={{ color: 'var(--ink-3)' }}>Logs Filed</div>
+                <div className="text-[11px]" style={{ color: 'var(--ink-3)' }}>Hook Events</div>
               </div>
             </div>
 
@@ -906,12 +1385,10 @@ export const OfficerInspector: React.FC<OfficerInspectorProps> = ({
 
   return (
     <>
-      {/* Desktop Sticky Inspector */}
-      <aside aria-label="Officer inspector" className="hidden xl:block w-[400px] 2xl:w-[430px] shrink-0">
+      <aside aria-label="Officer inspector" className="hidden xl:block w-[410px] 2xl:w-[440px] shrink-0">
         <div className="sticky top-20 h-[calc(100vh-6rem)]">{content}</div>
       </aside>
 
-      {/* Tablet / Mobile Slide-over Drawer */}
       {mobileOpen && (
         <div className="fixed inset-0 z-50 xl:hidden flex justify-end">
           <div
